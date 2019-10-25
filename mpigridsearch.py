@@ -1,7 +1,10 @@
 # from sys import argv
 # MPI INIT called here
 from mpi4py import MPI
-# from mpi_logic import fullSyncro, masterWorker
+
+# Determine number of threads
+from os import environ
+
 class HPCGridSearch:
     def __init__(self, param_grid, rank=None, size=None, comm=None, pschema="fs"):
         self.params = param_grid
@@ -12,11 +15,42 @@ class HPCGridSearch:
         if size is None:
             self.size = self.comm.Get_size()
         self.pschema = pschema
-    
-    def fit(self, x=None, y=None, augmentation=False, validation_split=0.0, validation_data=None, 
-            shuffle=True):
-        self.idata = x
-        self.odata = y
+        self.threads = None
+
+    def setThreads(self, threads=None):
+        if threads is None:
+            if 'OMP_NUM_THREADS' in environ.keys():
+                threads = environ['OMP_NUM_THREADS']
+                try:
+                    self.threads = int(threads)
+                except:
+                    self.threads = cpu_count()
+            else:
+                self.threads = cpu_count()
+        else:
+            self.threads = threads
+        try:
+            K.set_session(
+                K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=threads,
+                    # inter_op_parallelism_threads=threads, log_device_placement=True)))
+                    inter_op_parallelism_threads=threads)))
+        except:
+            import tensorflow as tf
+            config = tf.ConfigProto(intra_op_parallelism_threads=threads,
+                inter_op_parallelism_threads=threads)
+            K.tensorflow_backend.set_session(tf.Session(config=config))
+
+    def search(self, x1=None, y1=None, x2=None, y2=None, augmentation=False, 
+            validation_split=0.0, validation_data=None, shuffle=True,build_fn=None):
+        if build_fn is None:
+            self.rprint("ERROR: build_fn is None!")
+        else:
+            self.cm = build_fn=None
+        self.setThreads()
+        self.idata = x1
+        self.odata = y1
+        self.idatae = x2
+        self.odatae = y2
         self.augmentation = augmentation
         if pschema == 'fs':
             self.fullSyncro()
@@ -131,8 +165,62 @@ class HPCGridSearch:
             # Shut down!
 
     def train_model(self):
-        pass
-     
+        # Check for some basic defaults
+        if 'batch_size' in self.params:
+            batch_size = self.params['batch_size'][0]
+        else:
+            batch_size = 1
+        if "epochs" in params.keys():
+            epochs = params['epochs'][0]
+        else:
+            epochs = 1
+        if "learning_rate" in params.keys():
+            lr = float(params["learning_rate"][0])
+            self.cm = lambda : self.cm(learning_rate=lr)
+        else:
+            lr=0.001
+        # train_norm_2d_new, train_out_new, test_norm_2d, test_out = loadData(root=root)
+        model = self.cm()
+        if self.augmentation:
+            # Create a primitive augmentation object
+            datagen = ImageDataGenerator(
+                 rotation_range=5,
+                 width_shift_range=0,
+                 height_shift_range=0,
+                 shear_range=0,
+                 zoom_range=0,
+                 horizontal_flip=True,
+                 fill_mode='nearest')
+            self.rprint("Training a network {}...".format(datetime.now()))
+            # Fit the new model
+            start_time = datetime.now()
+            history=model.fit_generator(
+                datagen.flow(self.idata, 
+                    self.odata, batch_size=batch_size,shuffle=True),
+                steps_per_epoch=coeff*self.idata.shape[0]//batch_size,
+                epochs=epochs, verbose=0,
+                use_multiprocessing=True,
+                workers=threads)
+            end_time = datetime.now()
+            # Test accuracy
+            loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae, batch_size=batch_size, verbose=0) 
+        else:
+            self.rprint("Training a network {}...".format(datetime.now()))
+            # Fit the new model
+            start_time = datetime.now()
+            model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
+                   epochs=epochs, verbose=0, shuffle=True)
+            end_time = datetime.now()
+            # Test accuracy
+            loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae,
+                   batch_size=batch_size, verbose=0) 
+        # Compute timing metrics
+        run_time = deltaToString(end_time - start_time)
+        params['acc']  = accuracy
+        params['time'] = str(run_time)
+        results = str(params)
+        self.aprint("Trained! {}".format(results))
+        return results
 ### THESE ARE HELPER FUNCTIONS
 def getMaxCombos(params):
     return reduce(lambda x, y: x*y, (map(lambda key: len(params[key]),
