@@ -6,6 +6,10 @@ from mpi4py import MPI
 from os import environ
 from json import load as loadf
 import numpy as np
+from multiprocessing import cpu_count
+import keras.backend as K
+from functools import reduce
+from datetime import datetime
 
 #
 from keras.utils.multi_gpu_utils import multi_gpu_model
@@ -36,20 +40,20 @@ class HPCGridSearch:
                 try:
                     self.threads = int(threads)
                 except:
-                    self.threads = cpu_count()
+                    self.threads = int(cpu_count())
             else:
-                self.threads = cpu_count()
+                self.threads = int(cpu_count())
         else:
             self.threads = threads
         try:
             K.set_session(
-                K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=threads,
+                K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=self.threads,
                     # inter_op_parallelism_threads=threads, log_device_placement=True)))
-                    inter_op_parallelism_threads=threads)))
+                    inter_op_parallelism_threads=self.threads)))
         except:
             import tensorflow as tf
-            config = tf.ConfigProto(intra_op_parallelism_threads=threads,
-                inter_op_parallelism_threads=threads)
+            config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                inter_op_parallelism_threads=self.threads)
             K.tensorflow_backend.set_session(tf.Session(config=config))
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
@@ -82,9 +86,9 @@ class HPCGridSearch:
         self.idatae = x2
         self.odatae = y2
         self.augmentation = augmentation
-        if pschema == 'fs':
+        if self.pschema == 'fs':
             self.fullSyncro()
-        elif pschema == 'mw':
+        elif self.pschema == 'mw':
             self.masterWorker()
         else:
             self.rprint("ERROR: {} is not a valid option for a parallel schema!".format(self.pschema))
@@ -106,20 +110,19 @@ class HPCGridSearch:
         # Generate a full collection of combinations
         allCombos = getMaxCombos(self.params)
         cgen = lambda n: comboGenerator(n, params=self.params)
-        self.rprint("{} processes handling {} tasks".format(size, allCombos))
+        self.rprint("{} processes handling {} tasks".format(self.size, allCombos))
         # Map over all things belonging to the process
         allResults = []
-        with open('result-{:04d}.txt'.format(rank), 'w') as outfile:
+        with open('result-{:04d}.txt'.format(self.rank), 'w') as outfile:
             # Clear out the old file
             outfile.write("")
             # pass
 
-        for i in range(rank, allCombos, size):
-                print("[{:3d}] Moving onto cgen({})".format(rank, i),  flush=True)
-                allResults.append(self.train_model(cgen(i), cv=KFolds)
-
-                with open('result-{:04d}.txt'.format(rank), 'a+') as outfile:
-                    outfile.write("{}\n".format(allResults[-1]))
+        for i in range(self.rank, allCombos, self.size):
+            self.aprint("Moving onto cgen({})".format(i))
+            allResults.append(self.train_model(cgen(i))) #, cv=KFolds)
+            with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
+                outfile.write("{}\n".format(allResults[-1]))
         return allResults
 
 
@@ -137,23 +140,23 @@ class HPCGridSearch:
         """
         # Control the processes
         if self.rank == 0:
-            self.rprint("Process {} ready to control!".format(rank))
+            self.rprint("Process {} ready to control!".format(self.rank))
             cgen = lambda n: comboGenerator(n, params=self.params)
             # First generate all work
             # allCombos = generateAllCombinations(data)
             allCombos = getMaxCombos(data)
-            self.rprint("{} processes handling {} tasks".format(size, allCombos))
+            self.rprint("{} processes handling {} tasks".format(self.size, allCombos))
             # print("[{:3d}] {}".format(rank, allCombos))
             # Do this with a generator later!
 
             # Send work to all processes
-            for irank in range(1,size):
+            for irank in range(1,self.size):
                 item = cgen(irank - 1)
                 comm.send(item, dest=irank, tag=0)
                 self.rprint("Work sent to process {}".format(irank))
             totalWork = allCombos
 
-            for workNum in range(size - 1, totalWork):
+            for workNum in range(self.size - 1, totalWork):
                 # Now wait for completed work to be sent
                 status = MPI.Status()
                 res = comm.recv(source=MPI.ANY_SOURCE, tag=0,status=status)
@@ -166,7 +169,7 @@ class HPCGridSearch:
                     outfile.write("{}\n".format(res))
             # Shut down!
             # Collect remaining work
-            for irank in range(1,size):
+            for irank in range(1,self.size):
                 # Collect all remaining work!
                 res = self.comm.recv(source=irank, tag=0, status=None)
                 with open('results.txt', 'w') as outfile:
@@ -178,15 +181,16 @@ class HPCGridSearch:
 
         # Do work!
         else:
-            self.aprint("Process {} ready to work!".format(rank))
+            self.aprint("Process {} ready to work!".format(self.rank))
             res = {}
             master = 0
             res = comm.recv(source=master, tag=0, status=None)
             self.aprint("Received {} from Process {}".format(res, master))
             while res is not None:
                 # Do job
-                res = self.train_model(res, augmentation=augmentation, cv=KFolds,
-                        root=root, rank=rank)
+                # res = self.train_model(res, augmentation=augmentation,
+                        # cv=KFolds)
+                res = self.train_model(res)
                 # Send Completed Work
                 comm.send(res, dest=master, tag=0)
                 # Receive Job 
@@ -194,10 +198,10 @@ class HPCGridSearch:
                 self.aprint("Received {} from Process {}".format(res, master))
             # Shut down!
 
-    def train_model(self):
+    def train_model(self, params):
         # Check for some basic defaults
-        if 'batch_size' in self.params:
-            batch_size = self.params['batch_size'][0]
+        if 'batch_size' in params.keys():
+            batch_size = params['batch_size'][0]
         else:
             batch_size = 1
         if "epochs" in params.keys():
@@ -206,12 +210,12 @@ class HPCGridSearch:
             epochs = 1
         if "learning_rate" in params.keys():
             lr = float(params["learning_rate"][0])
-            self.cm = lambda : self.cm(learning_rate=lr)
+            cm = lambda : self.cm(learning_rate=lr)
         else:
             lr=0.001
-        model = self.cm()
-        if "gpus" in params.keys():
-            num_gpus = params['gpus'][0]
+        model = cm()
+        if "gpu" in params.keys():
+            num_gpus = params['gpu'][0]
             if self.agpu:
                 if num_gpus > 1:
                     model = multi_gpu_model(num_gpus)

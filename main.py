@@ -9,6 +9,10 @@
 # COURSE GITHUB CAN BE FOUND AT https://github.com/djgagne/ams-ml-python-course
 
 ################### DISTRIBUTE MODELS AND GATHER RESULTS ##################
+from keras.layers import Dense, Activation, Conv2D, Input, AveragePooling2D, MaxPooling2D, Flatten, LeakyReLU, Dropout
+from keras.optimizers import SGD, Adam
+from keras.layers import SpatialDropout2D
+from keras.models import Model, save_model, load_model
 def create_model(learning_rate=0.001):
     
     # Deep convolutional neural network
@@ -75,18 +79,21 @@ if __name__ == "__main__":
     # MPI INIT called here
     from mpi4py import MPI
     from mpigridsearch import HPCGridSearch
+    import numpy as np
     # from mpi_logic import fullSyncro, masterWorker
 
     if '-f' not in argv:
         print("No json file given!")
         exit()
+    else:
+        params = argv[argv.index('-f') + 1]
     if '-fs' in argv:
         # Mode: full syncro
         mode = "fs"
     elif '-mw' in argv:
         mode = "mw"
     if '-d' in argv:
-        root = argv[argv.index('-d' + 1)]
+        root = argv[argv.index('-d') + 1]
     else:
         root = "../data/"
     if '-a' in argv:
@@ -103,7 +110,7 @@ if __name__ == "__main__":
     else:
         augmentation = False
     # Initialize the searching object
-    grid = HPCGridSearch("./technical_report.json", pschema="fs")
+    grid = HPCGridSearch(params, pschema="fs")
     # def search(self, x1=None, y1=None, x2=None, y2=None, augmentation=False, 
     # Load the data
     x1, y1, x2, y2 = loadData(root=root)
