@@ -4,10 +4,22 @@ from mpi4py import MPI
 
 # Determine number of threads
 from os import environ
+from json import load as loadf
+import numpy as np
+
+#
+from keras.utils.multi_gpu_utils import multi_gpu_model
 
 class HPCGridSearch:
     def __init__(self, param_grid, rank=None, size=None, comm=None, pschema="fs"):
-        self.params = param_grid
+        # Load the json file provided in the string!
+        if isinstance(param_grid, str):
+            with open(param_grid, 'r') as inFile:
+                self.params = loadf(inFile)
+        elif isinstance(param_grid, dict):
+            self.params = param_grid
+
+
         if comm is None:
             self.comm = MPI.COMM_WORLD
         if rank is None:
@@ -16,7 +28,7 @@ class HPCGridSearch:
             self.size = self.comm.Get_size()
         self.pschema = pschema
         self.threads = None
-
+        self.agpu = None
     def setThreads(self, threads=None):
         if threads is None:
             if 'OMP_NUM_THREADS' in environ.keys():
@@ -39,9 +51,27 @@ class HPCGridSearch:
             config = tf.ConfigProto(intra_op_parallelism_threads=threads,
                 inter_op_parallelism_threads=threads)
             K.tensorflow_backend.set_session(tf.Session(config=config))
+    # In the case of preferring CPU only, merely set autoGPU to false
+    # Otherwise for manual management of GPUs, use this!
+    def setAutoGPU(self, autoGPU):
+        self.agpu = autoGPU
 
     def search(self, x1=None, y1=None, x2=None, y2=None, augmentation=False, 
-            validation_split=0.0, validation_data=None, shuffle=True,build_fn=None):
+            validation_split=0.0, validation_data=None, autoGPU=True, shuffle=True,build_fn=None):
+        # x1, y1, x2, y2 can also be strings from which the data should be
+        # loaded, assume they are numpy arrays
+        if self.agpu is None:
+            self.agpu = autoGPU
+        # Load data file if a string is provided instead
+        if isinstance(x1, str):
+            x1 =     np.load(x1)
+        if isinstance(x2, str):
+            x2 =     np.load(x2)
+        if isinstance(y1, str):
+            y1 =     np.load(y1)
+        if isinstance(y1, str):
+            y2 =     np.load(y2)
+
         if build_fn is None:
             self.rprint("ERROR: build_fn is None!")
         else:
@@ -182,8 +212,10 @@ class HPCGridSearch:
         model = self.cm()
         if "gpus" in params.keys():
             num_gpus = params['gpus'][0]
-            if num_gpus > 1:
-                model = multi_gpu_model(num_gpus)
+            if self.agpu:
+                if num_gpus > 1:
+                    model = multi_gpu_model(num_gpus)
+                    model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
         # else:
             # num_gpus = 0
         if self.augmentation:
@@ -201,7 +233,7 @@ class HPCGridSearch:
             start_time = datetime.now()
             history=model.fit_generator(
                 datagen.flow(self.idata, 
-                    self.odata, batch_size=batch_size,shuffle=True),
+                    self.odata, batch_size=batch_size,shuffle=shuffle),
                 steps_per_epoch=coeff*self.idata.shape[0]//batch_size,
                 epochs=epochs, verbose=0,
                 use_multiprocessing=True,
@@ -226,6 +258,7 @@ class HPCGridSearch:
         results = str(params)
         self.aprint("Trained! {}".format(results))
         return results
+
     def calc_verification_scores(self,test_labels,predictions):
         
         model_auc = roc_auc_score(test_labels, predictions)
