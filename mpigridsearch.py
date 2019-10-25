@@ -45,7 +45,7 @@ class HPCGridSearch:
         if build_fn is None:
             self.rprint("ERROR: build_fn is None!")
         else:
-            self.cm = build_fn=None
+            self.cm = build_fn
         self.setThreads()
         self.idata = x1
         self.odata = y1
@@ -79,7 +79,7 @@ class HPCGridSearch:
         self.rprint("{} processes handling {} tasks".format(size, allCombos))
         # Map over all things belonging to the process
         allResults = []
-        with open('result-{:03d}.txt'.format(rank), 'w') as outfile:
+        with open('result-{:04d}.txt'.format(rank), 'w') as outfile:
             # Clear out the old file
             outfile.write("")
             # pass
@@ -88,7 +88,7 @@ class HPCGridSearch:
                 print("[{:3d}] Moving onto cgen({})".format(rank, i),  flush=True)
                 allResults.append(self.train_model(cgen(i), cv=KFolds)
 
-                with open('result-{:03d}.txt'.format(rank), 'a+') as outfile:
+                with open('result-{:04d}.txt'.format(rank), 'a+') as outfile:
                     outfile.write("{}\n".format(allResults[-1]))
         return allResults
 
@@ -179,8 +179,13 @@ class HPCGridSearch:
             self.cm = lambda : self.cm(learning_rate=lr)
         else:
             lr=0.001
-        # train_norm_2d_new, train_out_new, test_norm_2d, test_out = loadData(root=root)
         model = self.cm()
+        if "gpus" in params.keys():
+            num_gpus = params['gpus'][0]
+            if num_gpus > 1:
+                model = multi_gpu_model(num_gpus)
+        # else:
+            # num_gpus = 0
         if self.augmentation:
             # Create a primitive augmentation object
             datagen = ImageDataGenerator(
@@ -221,6 +226,18 @@ class HPCGridSearch:
         results = str(params)
         self.aprint("Trained! {}".format(results))
         return results
+    def calc_verification_scores(self,test_labels,predictions):
+        
+        model_auc = roc_auc_score(test_labels, predictions)
+        model_brier_score = mean_squared_error(test_labels, predictions)
+        climo_brier_score = mean_squared_error(test_labels, np.ones(test_labels.size) * test_labels.sum() / test_labels.size)
+        model_brier_skill_score = 1 - model_brier_score / climo_brier_score
+        # print(f"AUC: {model_auc:0.3f}")
+        # print(f"Brier Score: {model_brier_score:0.3f}")
+        # print(f"Brier Score (Climatology): {climo_brier_score:0.3f}")
+        # print(f"Brier Skill Score: {model_brier_skill_score:0.3f}")
+        return model_auc
+
 ### THESE ARE HELPER FUNCTIONS
 def getMaxCombos(params):
     return reduce(lambda x, y: x*y, (map(lambda key: len(params[key]),
@@ -256,3 +273,14 @@ def comboGenerator(n, params={}):
         n = n // val
     # return keys, totals
     return result
+
+def deltaToString(tme):
+    sec = tme.total_seconds()
+    hours = int(sec) // 60 // 60
+    minutes = int(sec - hours* 60*60) // 60
+    sec = sec - hours* 60*60 - minutes * 60
+    return "{:02d}:{:02d}:{:010.7f}".format(hours, minutes, sec)
+
+def get_available_gpus():
+    local_device_protos = device_lib.list_local_devices()
+    return [x.name for x in local_device_protos if x.device_type == 'GPU']
