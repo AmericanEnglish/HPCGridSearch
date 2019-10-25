@@ -74,6 +74,7 @@ if __name__ == "__main__":
     from sys import argv
     # MPI INIT called here
     from mpi4py import MPI
+    from mpigridsearch import HPCGridSearch
     # from mpi_logic import fullSyncro, masterWorker
 
     if '-f' not in argv:
