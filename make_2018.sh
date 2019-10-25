@@ -57,8 +57,8 @@ _EOF_
 }
 # Constants needed for file creation
 CONDA_PREFIX=/umbc/xfs1/cybertrn/cybertraining2019/team3/research/miniconda3_gpu_master/
-SRC=/umbc/xfs1/cybertrn/cybertraining2019/team3/research/results/mastersThesis/multipleGPUs_moreBatch/src/
-DATA=/umbc/xfs1/cybertrn/cybertraining2019/team3/research/results/source/data/
+SRC=./
+DATA=/umbc/xfs1/cybertrn/cybertraining2019/team3/research/results/data/
 EXE=$SRC/main.py
 for NGPU in 1 2 3 4
 do
