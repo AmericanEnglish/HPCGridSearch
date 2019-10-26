@@ -291,7 +291,7 @@ class HPCGridSearch:
                  zoom_range=0,
                  horizontal_flip=True,
                  fill_mode='nearest')
-            self.rprint("Training a network {}...".format(datetime.now()))
+            self.aprint("Training a network {}...".format(datetime.now()))
             # Fit the new model
             start_time = datetime.now()
             history=model.fit_generator(
@@ -305,7 +305,7 @@ class HPCGridSearch:
             # Test accuracy
             loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae, batch_size=batch_size, verbose=0) 
         else:
-            self.rprint("Training a network {}...".format(datetime.now()))
+            self.aprint("Training a network {}...".format(datetime.now()))
             # Fit the new model
             start_time = datetime.now()
             model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
