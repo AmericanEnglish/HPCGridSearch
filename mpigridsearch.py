@@ -10,7 +10,7 @@ from multiprocessing import cpu_count
 import keras.backend as K
 from functools import reduce
 from datetime import datetime
-
+import hashlib
 #
 from keras.utils.multi_gpu_utils import multi_gpu_model
 
@@ -33,7 +33,8 @@ class HPCGridSearch:
         self.pschema = pschema
         self.threads = None
         self.agpu = None
-    def setThreads(self, threads=None):
+
+    def setEnv(self, threads=None, ngpus=None):
         if threads is None:
             if 'OMP_NUM_THREADS' in environ.keys():
                 threads = environ['OMP_NUM_THREADS']
@@ -45,18 +46,75 @@ class HPCGridSearch:
                 self.threads = int(cpu_count())
         else:
             self.threads = threads
-        try:
-            K.set_session(
-                K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=self.threads,
-                    # inter_op_parallelism_threads=threads, log_device_placement=True)))
-                    inter_op_parallelism_threads=self.threads)))
-        except:
+        self.setGPUsPerTask()
+        if len(self.grange) == 0:
+            try:
+                K.set_session(
+                    K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                        # inter_op_parallelism_threads=threads, log_device_placement=True)))
+                        inter_op_parallelism_threads=self.threads)))
+            except:
+                import tensorflow as tf
+                config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                    inter_op_parallelism_threads=self.threads)
+                K.tensorflow_backend.set_session(tf.Session(config=config))
+        else: # With GPUs
+            visible_devices = ",".join(map(lambda s: str(s), self.grange))
+            self.aprint("Visible devices set to {}".format(visible_devices))
             import tensorflow as tf
+                # K.clear_session()
+                # Delete the current session
+                # sess = K.backend.tensorflow_backend.get_session()
+                # K.backend.tensorflow_backend.clear_session()
+                # sess.close()
+                # sess = K.backend.tensorflow_backend.get_session()
+
+                # gc.collect()
+            gpu_options = tf.GPUOptions(visible_device_list=visible_devices)
             config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
-                inter_op_parallelism_threads=self.threads)
+                inter_op_parallelism_threads=self.threads,
+                gpu_options=gpu_options)
+            # config.gpu_options.visible_device_list = visible_devices
             K.tensorflow_backend.set_session(tf.Session(config=config))
+            self.aprint("New session has been set")
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
+    def setGPUsPerTask(self, ngpus=None):
+        if ngpus is None:
+            if 'NGPUS' in environ.keys():
+                ngpus = environ['NGPUS']
+                try:
+                    self.ngpus= int(ngpus)
+                except:
+                    self.ngpus = gpu_count()
+            else:
+                self.ngpus = gpu_count()
+        else:
+            self.ngpus = gpu_count()
+        lnode = MPI.Get_processor_name()
+        self.aprint("Determined {} gpus for my node, {}".format(self.ngpus, lnode))
+        # Create a NODE ONLY communicator to determine how many processes via 
+        # Comm_split currently exist on your node. 
+        #* This is by hostname so it only works in environments where hostnames are unique.
+
+        # Create an mpi color
+        # color = bytes(lnode, 'utf-8')
+        color = int(hashlib.sha1(lnode.encode()).hexdigest(), 16) % (10 ** 8)
+        # color = int(hashlib.sha256(lnode.encode()).hexdigest(), 16) % (10 ** 8)
+        # color = int.from_bytes(color, byteorder='little')
+        # Create node only communicator 
+        self.aprint("My color is {}".format(color))
+        lcomm = self.comm.Split(color, self.rank)
+        # Get size of mpi processes from this node only communicator
+        tasks_per_lnode = lcomm.Get_size()
+        self.lrank = lcomm.Get_rank()
+        self.lcomm = lcomm
+        # Compute local GPUs per task. There is not a more obvious way of doing
+        # this without passing even more environment variables.
+        # Determine number of gpus to be used
+        self.grange = list(range(self.lrank, self.ngpus, tasks_per_lnode))
+        self.aprint("Local rank {}, my gpus are {}".format(self.lrank, self.grange))
+
     def setAutoGPU(self, autoGPU):
         self.agpu = autoGPU
 
@@ -66,6 +124,7 @@ class HPCGridSearch:
         # loaded, assume they are numpy arrays
         if self.agpu is None:
             self.agpu = autoGPU
+            # self.setGPUsPerTask()
         # Load data file if a string is provided instead
         if isinstance(x1, str):
             x1 =     np.load(x1)
@@ -80,7 +139,7 @@ class HPCGridSearch:
             self.rprint("ERROR: build_fn is None!")
         else:
             self.cm = build_fn
-        self.setThreads()
+        self.setEnv()
         self.idata = x1
         self.odata = y1
         self.idatae = x2
@@ -318,6 +377,12 @@ def deltaToString(tme):
     sec = sec - hours* 60*60 - minutes * 60
     return "{:02d}:{:02d}:{:010.7f}".format(hours, minutes, sec)
 
+# from tensorflow.python.client import device_lib
 def get_available_gpus():
-    local_device_protos = device_lib.list_local_devices()
-    return [x.name for x in local_device_protos if x.device_type == 'GPU']
+    # local_device_protos = device_lib.list_local_devices()
+    # return [x.name for x in local_device_protos if x.device_type == 'GPU']
+    # SLURM sets this automatically, prevents a bad sessions
+    return environ['CUDA_VISIBLE_DEVICES'].split(",")
+
+def gpu_count():
+    return len(get_available_gpus())
