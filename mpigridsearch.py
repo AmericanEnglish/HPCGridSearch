@@ -13,6 +13,7 @@ from datetime import datetime
 import hashlib
 #
 from keras.utils.multi_gpu_utils import multi_gpu_model
+from keras.optimizers import Adam
 
 class HPCGridSearch:
     def __init__(self, param_grid, rank=None, size=None, comm=None, pschema="fs"):
@@ -277,7 +278,8 @@ class HPCGridSearch:
             num_gpus = params['gpu'][0]
             if self.agpu:
                 if num_gpus > 1:
-                    model = multi_gpu_model(num_gpus)
+                    opt = Adam(lr=lr)
+                    model = multi_gpu_model(model,num_gpus)
                     model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
         # else:
             # num_gpus = 0
