@@ -192,6 +192,7 @@ class HPCGridSearch:
                 allResults.append(d)
                 with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
                     outfile.write("{}\n".format(allResults[-1]))
+        self.aprint('All tasks completed!')
         return allResults
 
 
