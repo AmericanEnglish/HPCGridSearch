@@ -328,7 +328,7 @@ class HPCGridSearch:
                    batch_size=batch_size, verbose=0) 
         # Compute timing metrics
         run_time = deltaToString(end_time - start_time)
-        params['acc']  = accuracy
+        params['acc']  = str(accuracy)
         params['time'] = str(run_time)
         results = str(params)
         self.aprint("Trained! {}".format(results))

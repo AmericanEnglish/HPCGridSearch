@@ -163,7 +163,7 @@ def createRow(jdata, categories, catval, dicts):
     # print(acc)
     # print(times, acc)
     for val in jdata[categories[1]]:
-        if val in times.keys():
+        if val in times.keys() and bool(times[val]):
             row1 += "& {:8}".format(times[val])
             row2 += "& {:8}".format(acc[val])
         else:
@@ -195,17 +195,30 @@ def parseLine(line):
         # print(aDict)
     else:
         # aDict = loads(entries[0].replace("'","\""))
-        aDict = loads(line.replace("'",'"'))
+        line = line.replace("'",'"')
+        aDict = loads(line)
         # Cut off fractional seconds
         aDict['time'] = aDict['time'].split(".")[0]
+        # Converts accuracy to a percent
+        try:
+            aDict['acc'] = "{:6.2f}".format(float(aDict['acc'])*100)
+        except ValueError:
+            aDict['acc'] = str(aDict['acc']*100).split(".")[0]
     return aDict
 
     
 def loadData(filename, jfilename):
     with open(jfilename, 'r') as infile:
-        jdata = loadf(infile)
+        jdata = infile.read().strip()
     with open(filename, 'r') as infile:
         data = infile.read().strip()
+    if not data.strip():
+        print("File is empty: {}".format(filename))
+        exit()
+    elif not jdata.strip():
+        print("jFile is empty: {}".format(jfilename))
+        exit()
+    jdata = loads(jdata)
     data = list(map(parseLine, data.split("\n")))
     for aDict in data:
         keys = aDict.keys()
@@ -237,23 +250,24 @@ if __name__ == "__main__":
         eoc = None
 
     # Take in the json file to avoid a ton of work in the table builder
-    if "-f" in argv and "-j" in argv:
-        filename = argv[argv.index('-f') + 1]
-        jfilename = argv[argv.index('-j') + 1]
-        data, jdata = loadData(filename, jfilename)
-        table1, table2 = createTable(data, jdata, categories=categories,
-                groupby=groupby, endocap=eoc)
-    else:
-        print("Not enough information provided!")
-        print("python script.py -f result.txt -j associatedJSON.json")
-        exit()
-    if '-o' in argv:
-        ofilename1 = argv[argv.index('-o') + 1]
-        ofilename2 = argv[argv.index('-o') + 2]
-        saveOutput(ofilename1, table1)
-        saveOutput(ofilename2, table2)
-    else:
-        saveOutput("./timings.tex", table1)
-        saveOutput("./accuracy.tex", table2)
-
-
+    try:
+        if "-f" in argv and "-j" in argv:
+            filename = argv[argv.index('-f') + 1]
+            jfilename = argv[argv.index('-j') + 1]
+            data, jdata = loadData(filename, jfilename)
+            table1, table2 = createTable(data, jdata, categories=categories,
+                    groupby=groupby, endocap=eoc)
+        else:
+            print("Not enough information provided!")
+            print("python script.py -f result.txt -j associatedJSON.json")
+            exit()
+        if '-o' in argv:
+            ofilename1 = argv[argv.index('-o') + 1]
+            ofilename2 = argv[argv.index('-o') + 2]
+            saveOutput(ofilename1, table1)
+            saveOutput(ofilename2, table2)
+        else:
+            saveOutput("./timings.tex", table1)
+            saveOutput("./accuracy.tex", table2)
+    except Exception as e:
+        print(e)
