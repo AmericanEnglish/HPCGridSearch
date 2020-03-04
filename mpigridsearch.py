@@ -180,9 +180,18 @@ class HPCGridSearch:
 
         for i in range(self.rank, allCombos, self.size):
             self.aprint("Moving onto cgen({})".format(i))
-            allResults.append(self.train_model(cgen(i))) #, cv=KFolds)
-            with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
-                outfile.write("{}\n".format(allResults[-1]))
+            d = cgen(i)
+            try:
+                allResults.append(self.train_model(d)) #, cv=KFolds)
+                with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
+                    outfile.write("{}\n".format(allResults[-1]))
+            except Exception as e:
+                self.aprint("Error: Failed to train {}, {}".format(d,e))
+                d['acc'] = ''
+                d['time'] = ''
+                allResults.append(d)
+                with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
+                    outfile.write("{}\n".format(allResults[-1]))
         return allResults
 
 
