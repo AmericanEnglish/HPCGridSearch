@@ -320,7 +320,7 @@ class HPCGridSearch:
             self.aprint("Training a network {}...".format(datetime.now()))
             # Fit the new model
             start_time = datetime.now()
-            model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
+            history = model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
                    epochs=epochs, verbose=0, shuffle=True)
             end_time = datetime.now()
             # Test accuracy
@@ -330,6 +330,7 @@ class HPCGridSearch:
         run_time = deltaToString(end_time - start_time)
         params['acc']  = str(accuracy)
         params['time'] = str(run_time)
+        params['tacc'] = str(history['accuracy'])
         results = str(params)
         self.aprint("Trained! {}".format(results))
         return results
