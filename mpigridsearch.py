@@ -99,6 +99,7 @@ class HPCGridSearch:
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
                 self.aprint("Visible devices set to {}: {}".format(self.grange, physical_devices))
                 self.phys = physical_devices
+                self.vis  = ",".join(map(lambda s: str(s), self.grange))
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
     def setGPUsPerTask(self, ngpus=None):
@@ -211,6 +212,7 @@ class HPCGridSearch:
                 self.aprint("Error: Failed to train {}, {}".format(d,e))
                 d['acc'] = ''
                 d['time'] = ''
+                d['tacc'] = ''
                 allResults.append(d)
                 with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
                     outfile.write("{}\n".format(allResults[-1]))
@@ -315,7 +317,8 @@ class HPCGridSearch:
                     model = multi_gpu_model(model,num_gpus)
                     model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
                 elif num_gpus > 1 and tfversion >= twoOh:
-                    strat = D.MirroredStrategy(devices=self.phys)
+                    # strat = D.MirroredStrategy(devices=self.vis)
+                    strat = D.MirroredStrategy()
                     with strat.scope():
                         model = cm()
                         model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
