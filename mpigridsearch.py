@@ -17,6 +17,7 @@ if tfversion >= twoOh:
     from tensorflow.keras import backend as K
     from tensorflow.keras.optimizers import Adam
     from tensorflow import distribute as D
+    import tensorflow as tf
     
 else: # Assuming 1.XX
     import keras.backend as K
@@ -95,11 +96,13 @@ class HPCGridSearch:
                 physical_devices.sort()
                 physical_devices = [physical_devices[int(i)] for i in self.grange]
                 tf.config.set_visible_devices(physical_devices, 'GPU')
+                # f = lambda x: tf.config.experimental.set_memory_growth(x, True)
+                # map(f, physical_devices)
                 tf.config.threading.set_inter_op_parallelism_threads(self.threads)
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
                 self.aprint("Visible devices set to {}: {}".format(self.grange, physical_devices))
                 self.phys = physical_devices
-                self.vis  = ",".join(map(lambda s: str(s), self.grange))
+                self.vis  = list(map(lambda s: str(s), self.grange))
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
     def setGPUsPerTask(self, ngpus=None):
@@ -317,8 +320,15 @@ class HPCGridSearch:
                     model = multi_gpu_model(model,num_gpus)
                     model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
                 elif num_gpus > 1 and tfversion >= twoOh:
-                    # strat = D.MirroredStrategy(devices=self.vis)
-                    strat = D.MirroredStrategy()
+                    # strat = D.MirroredStrategy(devices=self.phys)
+                    vis = list(map(lambda x: "/gpu:{}".format(x), self.vis))
+                    print("vis", vis)
+                    # Currently crashing due to NCCL error
+                    # strat = D.MirroredStrategy(devices=vis)
+                    # Possible fix is using separate merge technique
+                    strat = D.MirroredStrategy(devices=vis,
+                            cross_device_ops=tf.distribute.HierarchicalCopyAllReduce())
+                    # strat = D.MirroredStrategy()
                     with strat.scope():
                         model = cm()
                         model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
