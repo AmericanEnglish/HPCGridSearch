@@ -7,13 +7,27 @@ from os import environ
 from json import load as loadf
 import numpy as np
 from multiprocessing import cpu_count
-import keras.backend as K
+
+# Determine TensorFlow version for compatability
+from tensorflow import __version__ as tfversion
+tfversion = tfversion.split(".")
+tfversion = list(map(lambda x: int(x), tfversion))
+twoOh = [2, 0, 0]
+if tfversion >= twoOh:
+    from tensorflow.keras import backend as K
+    from tensorflow.keras.optimizers import Adam
+    from tensorflow import distribute as D
+    
+else: # Assuming 1.XX
+    import keras.backend as K
+    from keras.utils.multi_gpu_utils import multi_gpu_model
+    from keras.optimizers import Adam
+
 from functools import reduce
 from datetime import datetime
 import hashlib
 #
-from keras.utils.multi_gpu_utils import multi_gpu_model
-from keras.optimizers import Adam
+
 
 class HPCGridSearch:
     def __init__(self, param_grid, rank=None, size=None, comm=None, pschema="fs"):
@@ -49,35 +63,36 @@ class HPCGridSearch:
             self.threads = threads
         self.setGPUsPerTask()
         if len(self.grange) == 0:
-            try:
-                K.set_session(
-                    K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=self.threads,
-                        # inter_op_parallelism_threads=threads, log_device_placement=True)))
-                        inter_op_parallelism_threads=self.threads)))
-            except:
+            if tfversion < twoOh:
+                try:  # very old version of tensorflow do weird things
+                    K.set_session(
+                        K.tf.Session(config=K.tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                            # inter_op_parallelism_threads=threads, log_device_placement=True)))
+                            inter_op_parallelism_threads=self.threads)))
+                except:
+                    import tensorflow as tf
+                    config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                        inter_op_parallelism_threads=self.threads)
+                    K.tensorflow_backend.set_session(tf.Session(config=config))
+            else: # assumed >= 2.0
                 import tensorflow as tf
-                config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
-                    inter_op_parallelism_threads=self.threads)
-                K.tensorflow_backend.set_session(tf.Session(config=config))
+                tf.config.threading.set_inter_op_parallelism_threads(self.threads)
+                tf.config.threading.set_intra_op_parallelism_threads(self.threads)
         else: # With GPUs
             visible_devices = ",".join(map(lambda s: str(s), self.grange))
             self.aprint("Visible devices set to {}".format(visible_devices))
             import tensorflow as tf
-                # K.clear_session()
-                # Delete the current session
-                # sess = K.backend.tensorflow_backend.get_session()
-                # K.backend.tensorflow_backend.clear_session()
-                # sess.close()
-                # sess = K.backend.tensorflow_backend.get_session()
-
-                # gc.collect()
-            gpu_options = tf.GPUOptions(visible_device_list=visible_devices)
-            config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
-                inter_op_parallelism_threads=self.threads,
-                gpu_options=gpu_options)
-            # config.gpu_options.visible_device_list = visible_devices
-            K.tensorflow_backend.set_session(tf.Session(config=config))
-            self.aprint("New session has been set")
+            if tfversion < twoOh: # 2.0 reworks and strategies replace this method
+                gpu_options = tf.GPUOptions(visible_device_list=visible_devices)
+                config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
+                    inter_op_parallelism_threads=self.threads,
+                    gpu_options=gpu_options)
+                # config.gpu_options.visible_device_list = visible_devices
+                K.tensorflow_backend.set_session(tf.Session(config=config))
+                self.aprint("New session has been set")
+            else: # This should still be done for 2.0+ gpus
+                tf.config.threading.set_inter_op_parallelism_threads(self.threads)
+                tf.config.threading.set_intra_op_parallelism_threads(self.threads)
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
     def setGPUsPerTask(self, ngpus=None):
@@ -120,7 +135,8 @@ class HPCGridSearch:
         self.agpu = autoGPU
 
     def search(self, x1=None, y1=None, x2=None, y2=None, augmentation=False, 
-            validation_split=0.0, validation_data=None, autoGPU=True, shuffle=True,build_fn=None):
+            validation_split=0.0, validation_data=None, autoGPU=True, shuffle=True,
+            build_fn=None):
         # x1, y1, x2, y2 can also be strings from which the data should be
         # loaded, assume they are numpy arrays
         if self.agpu is None:
@@ -283,16 +299,25 @@ class HPCGridSearch:
             cm = lambda : self.cm(learning_rate=lr)
         else:
             lr=0.001
-        model = cm()
+        # model = cm()
         if "gpu" in params.keys():
             num_gpus = params['gpu'][0]
             if self.agpu:
-                if num_gpus > 1:
-                    opt = Adam(lr=lr)
+                opt = Adam(lr=lr)
+                if num_gpus > 1 and tfversion < twoOh:
+                    model = cm()
                     model = multi_gpu_model(model,num_gpus)
                     model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
-        # else:
+                if num_gpus > 1 and tfversion >= twoOh:
+                    strat = D.MirroredStrategy(devices=self.grange)
+                    with strat.scope():
+                        model = cm()
+                        model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
+        else:
             # num_gpus = 0
+            model = cm()
+            # opt = Adam(lr=lr)
+            # model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
         if self.augmentation:
             # Create a primitive augmentation object
             datagen = ImageDataGenerator(
@@ -330,7 +355,7 @@ class HPCGridSearch:
         run_time = deltaToString(end_time - start_time)
         params['acc']  = str(accuracy)
         params['time'] = str(run_time)
-        params['tacc'] = str(history['accuracy'])
+        params['tacc'] = str(history.history['accuracy'])
         results = str(params)
         self.aprint("Trained! {}".format(results))
         return results
@@ -395,7 +420,11 @@ def get_available_gpus():
     # local_device_protos = device_lib.list_local_devices()
     # return [x.name for x in local_device_protos if x.device_type == 'GPU']
     # SLURM sets this automatically, prevents a bad sessions
-    return environ['CUDA_VISIBLE_DEVICES'].split(",")
+    if "CUDA_VISIBLE_DEVICES" in environ:
+        gpus = environ['CUDA_VISIBLE_DEVICES'].split(",")
+    else:
+        gpus = []
+    return gpus
 
 def gpu_count():
     return len(get_available_gpus())
