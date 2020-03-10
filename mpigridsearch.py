@@ -80,7 +80,6 @@ class HPCGridSearch:
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
         else: # With GPUs
             visible_devices = ",".join(map(lambda s: str(s), self.grange))
-            self.aprint("Visible devices set to {}".format(visible_devices))
             import tensorflow as tf
             if tfversion < twoOh: # 2.0 reworks and strategies replace this method
                 gpu_options = tf.GPUOptions(visible_device_list=visible_devices)
@@ -89,10 +88,17 @@ class HPCGridSearch:
                     gpu_options=gpu_options)
                 # config.gpu_options.visible_device_list = visible_devices
                 K.tensorflow_backend.set_session(tf.Session(config=config))
+                self.aprint("Visible devices set to {}".format(visible_devices))
                 self.aprint("New session has been set")
             else: # This should still be done for 2.0+ gpus
+                physical_devices = tf.config.list_physical_devices('GPU')
+                physical_devices.sort()
+                physical_devices = [physical_devices[int(i)] for i in visible_devices]
+                tf.config.set_visible_devices(physical_devices, 'GPU')
                 tf.config.threading.set_inter_op_parallelism_threads(self.threads)
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
+                self.aprint("Visible devices set to {}: {}".format(visible_devices, physical_devices))
+                self.phys = physical_devices
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
     def setGPUsPerTask(self, ngpus=None):
@@ -308,11 +314,13 @@ class HPCGridSearch:
                     model = cm()
                     model = multi_gpu_model(model,num_gpus)
                     model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
-                if num_gpus > 1 and tfversion >= twoOh:
-                    strat = D.MirroredStrategy(devices=self.grange)
+                elif num_gpus > 1 and tfversion >= twoOh:
+                    strat = D.MirroredStrategy(devices=self.phys)
                     with strat.scope():
                         model = cm()
                         model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
+                else:
+                    model = cm()
         else:
             # num_gpus = 0
             model = cm()
