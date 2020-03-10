@@ -322,7 +322,7 @@ class HPCGridSearch:
                 elif num_gpus > 1 and tfversion >= twoOh:
                     # strat = D.MirroredStrategy(devices=self.phys)
                     vis = list(map(lambda x: "/gpu:{}".format(x), self.vis))
-                    print("vis", vis)
+                    # print("vis", vis)
                     # Currently crashing due to NCCL error
                     # strat = D.MirroredStrategy(devices=vis)
                     # Possible fix is using separate merge technique
