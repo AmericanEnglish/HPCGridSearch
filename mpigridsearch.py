@@ -79,9 +79,9 @@ class HPCGridSearch:
                 tf.config.threading.set_inter_op_parallelism_threads(self.threads)
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
         else: # With GPUs
-            visible_devices = ",".join(map(lambda s: str(s), self.grange))
             import tensorflow as tf
             if tfversion < twoOh: # 2.0 reworks and strategies replace this method
+                visible_devices = ",".join(map(lambda s: str(s), self.grange))
                 gpu_options = tf.GPUOptions(visible_device_list=visible_devices)
                 config = tf.ConfigProto(intra_op_parallelism_threads=self.threads,
                     inter_op_parallelism_threads=self.threads,
@@ -93,11 +93,11 @@ class HPCGridSearch:
             else: # This should still be done for 2.0+ gpus
                 physical_devices = tf.config.list_physical_devices('GPU')
                 physical_devices.sort()
-                physical_devices = [physical_devices[int(i)] for i in visible_devices]
+                physical_devices = [physical_devices[int(i)] for i in self.grange]
                 tf.config.set_visible_devices(physical_devices, 'GPU')
                 tf.config.threading.set_inter_op_parallelism_threads(self.threads)
                 tf.config.threading.set_intra_op_parallelism_threads(self.threads)
-                self.aprint("Visible devices set to {}: {}".format(visible_devices, physical_devices))
+                self.aprint("Visible devices set to {}: {}".format(self.grange, physical_devices))
                 self.phys = physical_devices
     # In the case of preferring CPU only, merely set autoGPU to false
     # Otherwise for manual management of GPUs, use this!
