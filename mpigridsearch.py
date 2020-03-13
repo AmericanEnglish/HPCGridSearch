@@ -296,6 +296,7 @@ class HPCGridSearch:
             # Shut down!
 
     def train_model(self, params):
+        loss_fn = "categorical_crossentropy"
         # Check for some basic defaults
         if 'batch_size' in params.keys():
             batch_size = params['batch_size'][0]
@@ -310,35 +311,23 @@ class HPCGridSearch:
             cm = lambda : self.cm(learning_rate=lr)
         else:
             lr=0.001
-        # model = cm()
+        model = cm()
         if "gpu" in params.keys():
             num_gpus = params['gpu'][0]
             if self.agpu:
-                opt = Adam(lr=lr)
+                opt = model.optimizer
                 if num_gpus > 1 and tfversion < twoOh:
-                    model = cm()
                     model = multi_gpu_model(model,num_gpus)
-                    model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
+                    model.compile(opt, loss_fn, metrics=['accuracy'])
                 elif num_gpus > 1 and tfversion >= twoOh:
                     # strat = D.MirroredStrategy(devices=self.phys)
                     vis = list(map(lambda x: "/gpu:{}".format(x), self.vis))
-                    # print("vis", vis)
-                    # Currently crashing due to NCCL error
-                    # strat = D.MirroredStrategy(devices=vis)
-                    # Possible fix is using separate merge technique
                     strat = D.MirroredStrategy(devices=vis,
                             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce())
                     # strat = D.MirroredStrategy()
                     with strat.scope():
                         model = cm()
                         model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
-                else:
-                    model = cm()
-        else:
-            # num_gpus = 0
-            model = cm()
-            # opt = Adam(lr=lr)
-            # model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
         if self.augmentation:
             # Create a primitive augmentation object
             datagen = ImageDataGenerator(
@@ -366,16 +355,19 @@ class HPCGridSearch:
             self.aprint("Training a network {}...".format(datetime.now()))
             # Fit the new model
             start_time = datetime.now()
+            # Needs to be updated for multiple inputs and outputs
             history = model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
                    epochs=epochs, verbose=0, shuffle=True)
             end_time = datetime.now()
             # Test accuracy
+            # Captured output needs to be updated for multi-output
             loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae,
                    batch_size=batch_size, verbose=0) 
         # Compute timing metrics
         run_time = deltaToString(end_time - start_time)
         params['acc']  = str(accuracy)
         params['time'] = str(run_time)
+        # needs to be update for multiple outputs
         params['tacc'] = str(history.history['accuracy'])
         results = str(params)
         self.aprint("Trained! {}".format(results))
