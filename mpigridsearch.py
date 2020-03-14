@@ -296,7 +296,7 @@ class HPCGridSearch:
             # Shut down!
 
     def train_model(self, params):
-        loss_fn = "categorical_crossentropy"
+        # loss_fn = "categorical_crossentropy"
         # Check for some basic defaults
         if 'batch_size' in params.keys():
             batch_size = params['batch_size'][0]
@@ -315,10 +315,15 @@ class HPCGridSearch:
         if "gpu" in params.keys():
             num_gpus = params['gpu'][0]
             if self.agpu:
+                loss_fn = model.loss
                 opt = model.optimizer
+                metrics = model.metrics_names
+                # Get the names of unique metrics
+                metrics = list(map(lambda x: x.split("_")[-1], metrics))
+                metrics = list(set(metrics))
                 if num_gpus > 1 and tfversion < twoOh:
                     model = multi_gpu_model(model,num_gpus)
-                    model.compile(opt, loss_fn, metrics=['accuracy'])
+                    model.compile(opt, loss_fn, metrics=metrics)
                 elif num_gpus > 1 and tfversion >= twoOh:
                     # strat = D.MirroredStrategy(devices=self.phys)
                     vis = list(map(lambda x: "/gpu:{}".format(x), self.vis))
@@ -327,7 +332,7 @@ class HPCGridSearch:
                     # strat = D.MirroredStrategy()
                     with strat.scope():
                         model = cm()
-                        model.compile(opt, "binary_crossentropy", metrics=['accuracy'])
+                        model.compile(opt, loss_fn, metrics=metrics)
         if self.augmentation:
             # Create a primitive augmentation object
             datagen = ImageDataGenerator(
