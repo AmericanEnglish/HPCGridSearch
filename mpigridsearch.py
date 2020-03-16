@@ -306,12 +306,31 @@ class HPCGridSearch:
             epochs = params['epochs'][0]
         else:
             epochs = 1
-        if "learning_rate" in params.keys():
-            lr = float(params["learning_rate"][0])
-            cm = lambda : self.cm(learning_rate=lr)
-        else:
-            lr=0.001
-        model = cm()
+        # remove all things that can't be passed to the creator
+        # Any value that the creator would take but is not present in params,
+        # we assume that the creator has a default value set for that argument
+        noPass = [
+            "epochs",
+            "gpu",
+            "batch_size"
+        ]
+        usableParams = {}
+        for value in params.keys():
+            if value not in noPass:
+                k = params[value]
+                if isinstance(k, list):
+                    k = k[0]
+                # Determine if it is an int, float, or other
+                try:
+                    k = float(k)
+                    if k//1 == k:
+                        k = int(k)
+                except ValueError: # Here we assume it isnt a float or int
+                    pass
+                # We pass other things raw to the creator
+                usableParams[value] = k
+
+        model = self.cm(**usableParams)
         if "gpu" in params.keys():
             num_gpus = params['gpu'][0]
             if self.agpu:
@@ -331,7 +350,7 @@ class HPCGridSearch:
                             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce())
                     # strat = D.MirroredStrategy()
                     with strat.scope():
-                        model = cm()
+                        model = self.cm(**usableParams)
                         model.compile(opt, loss_fn, metrics=metrics)
         if self.augmentation:
             # Create a primitive augmentation object
