@@ -16,6 +16,7 @@ def extract2(val):
     return val
 
 def createTable(data, categories=None, groupby = None, endocap=None):
+    # The next many lines parse user input, ignore them!
     keys = sorted(data.columns.to_list())
     if categories is None:
         print("Pick Column/Row")
@@ -44,6 +45,7 @@ def createTable(data, categories=None, groupby = None, endocap=None):
     del otherKeys[otherKeys.index('time')]
     del otherKeys[otherKeys.index('acc')]
     del otherKeys[otherKeys.index('tacc')]
+    ## This determines a bunch of default values! This is very important!
     defaults = {}
     if len(otherKeys) != 0:
         for key in otherKeys:
@@ -76,11 +78,15 @@ def createTable(data, categories=None, groupby = None, endocap=None):
     # [   d1][f1][f2][f3]
     # [   d2][f4][f5][f6]
     # [   d3][f7][f8][f9]
+    # This removes all extra data which doesnt fit the default values.
+    # Without this step we would have too much data to arrange into tables
     sdata = data.copy()
     for key in defaults.keys():
         # Get rid of all the data which does not have the required defaults
         sdata = sdata.loc[sdata[key] == defaults[key]]
-    # Generate the first pandas table using pivots for time
+    # Generate the first pandas table using pivots with time and accuracy as the
+    # table cross entries. There is one table for each value in the grouped
+    # in the grouped variable
     # print(sdata)
     tabs_t = []
     tabs_a = []
@@ -91,6 +97,8 @@ def createTable(data, categories=None, groupby = None, endocap=None):
             columns=categories[0], values='time'))
         tabs_a.append(sdata.loc[sdata[groupby] == val].pivot(index=categories[1], 
             columns=categories[0], values='acc'))
+    # This generates all the latex! Once you're to a point where you need to
+    # generate latex data just use the whole postProcess.py to do it!
     # Generate all header and caption data for the table
     categories = list(map(lambda x: x.replace("_", " "), categories))
     groupby = groupby.replace("_", " ")
@@ -119,7 +127,7 @@ def createTable(data, categories=None, groupby = None, endocap=None):
                 if val:
                     v[i+1] = "{:9.2f}".format(float(v[i+1])*100)
                 else: # Empty string
-                    v[i+1] = "    N/A"
+                    v[i+1] = "     N/A"
         return v
 
     for i in range(len(tabs_t)):
