@@ -329,20 +329,23 @@ class HPCGridSearch:
         ident = dencode(params)
         chk = sha256(ident.encode("utf-8")).hexdigest()
         params['hash'] = chk
-        # Just start passing a dictionary to cm...
+        # Do not forget to extract it
+        for key in params.keys():
+            if isinstance(key, list):
+                params[key] = params[key][0]
         # Check for some basic defaults
         if 'batch_size' in params.keys():
-            batch_size = params['batch_size'][0]
+            batch_size = params['batch_size']
         else:
             batch_size = 1
         if "epochs" in params.keys():
-            epochs = params['epochs'][0]
+            epochs = params['epochs']
         else:
             epochs = 1
         # Just pass everything to create, the function may need it.
-        model = self.cm(**usableParams)
+        model = self.cm(**params)
         if "gpu" in params.keys():
-            num_gpus = params['gpu'][0]
+            num_gpus = params['gpu']
             if self.agpu:
                 # opt = Adam(lr=lr)
                 if num_gpus > 1 and tfversion < twoOh:
@@ -360,7 +363,7 @@ class HPCGridSearch:
                             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce())
                     # strat = D.MirroredStrategy()
                     with strat.scope():
-                        model = self.cm(**usableParams)
+                        model = self.cm(**params)
                         opt = model.optimizer
                         model.compile(opt, model.loss, metrics=['accuracy'])
         if self.augmentation:
@@ -463,10 +466,19 @@ class HPCGridSearch:
 
 ### THESE ARE HELPER FUNCTIONS
 def getMaxCombos(params):
-    return reduce(lambda x, y: x*y, (map(lambda key: len(params[key]),
-        params.keys())))
+    def comboHelper(d):
+        if isinstance(d, list):
+            return len(d)
+        else:
+            return 1
 
-def comboGenerator(n, params={}):
+    return reduce(
+            lambda x, y: x*y, 
+                (map(lambda key: comboHelper(params[key]), params.keys())))
+
+def comboGenerator(n, params=None):
+    if params is None:
+        params = {}
     """(int, dictionary) -> dictionary
 
     Acts as a pseudo-generator. Given an index it returns a dictionary.
@@ -483,16 +495,21 @@ def comboGenerator(n, params={}):
     if n >= maxCombos:
         return None
 
-    if "data_multiplier" in keys:
-        del keys[keys.index("data_multiplier")]
-    else:
-        params["data_multiplier"] = [1]
+    # if "data_multiplier" in keys:
+        # del keys[keys.index("data_multiplier")]
+    # else:
+        # params["data_multiplier"] = [1]
     # keys.insert(0, "data_multiplier")
-    keys.append("data_multiplier")
+    # keys.append("data_multiplier")
     result = {}
     for key in keys:
-        val  = len(params[key])
-        result[key] = [params[key][n % val]]
+        q = params[key]
+        if isinstance(q, list):
+            val  = len(params[key])
+            result[key] = q[n % val]
+        else:
+            val = 1
+            result[key] = q
         n = n // val
     # return keys, totals
     return result
