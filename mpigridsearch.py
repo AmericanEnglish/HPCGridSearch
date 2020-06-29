@@ -7,7 +7,13 @@ from os import environ
 from json import load as loadf
 import numpy as np
 from multiprocessing import cpu_count
-
+# For creating references to weights
+from hashlib import sha256
+from jsonpickle import encode as dencode
+from os import mkdir
+from os.path import isdir
+# Autogeneration of training sets
+from sklearn.model_selection import train_test_split
 # Determine TensorFlow version for compatability
 from tensorflow import __version__ as tfversion
 tfversion = tfversion.split(".")
@@ -18,17 +24,27 @@ if tfversion >= twoOh:
     from tensorflow.keras.optimizers import Adam
     from tensorflow import distribute as D
     import tensorflow as tf
-    
+    from   tensorflow.keras.callbacks import CSVLogger
+    from tensorflow.keras.callbacks import Callback as KCallback  
 else: # Assuming 1.XX
     import keras.backend as K
     from keras.utils.multi_gpu_utils import multi_gpu_model
-    from keras.optimizers import Adam
+    # from keras.optimizers import Adam
 
 from functools import reduce
 from datetime import datetime
 import hashlib
-#
 
+# Original from: -> Adapted to use better real time metric
+# https://stackoverflow.com/questions/43178668/record-the-computation-time-for-each-epoch-in-keras-during-model-fit
+# Post about making custom metrics show up in the CSV
+# https://stackoverflow.com/questions/48488549/keras-append-to-logs-from-callback
+class TimeHistory(KCallback):
+    def on_epoch_begin(self, epoch, logs):
+        self.epoch_time_start = datetime.now()
+
+    def on_epoch_end(self, epoch, logs):
+        logs["epoch_time"] = deltaToString(datetime.now() - self.epoch_time_start)
 
 class HPCGridSearch:
     def __init__(self, param_grid, rank=None, size=None, comm=None, pschema="fs"):
@@ -114,7 +130,7 @@ class HPCGridSearch:
                 except:
                     self.ngpus = gpu_count()
             else:
-                self.ngpus = gpu_count()
+                self.ngpus = gpu_count() 
         else:
             self.ngpus = gpu_count()
         lnode = MPI.Get_processor_name()
@@ -153,14 +169,26 @@ class HPCGridSearch:
             self.agpu = autoGPU
             # self.setGPUsPerTask()
         # Load data file if a string is provided instead
-        if isinstance(x1, str):
+        if x1 is None:
+            print("ERROR: input data is None!")
+            exit()
+        elif isinstance(x1, str):
             x1 =     np.load(x1)
-        if isinstance(x2, str):
+    
+        if x2 is not None and isinstance(x2, str):
             x2 =     np.load(x2)
-        if isinstance(y1, str):
+        if y1 is None:
+            print("ERROR: output data is None!")
+            exit()
+        elif isinstance(y1, str):
             y1 =     np.load(y1)
-        if isinstance(y1, str):
+
+        if y2 is not None and isinstance(y1, str):
             y2 =     np.load(y2)
+        # If no training sets were provided them generate them    
+        if x2 is None or y2 is None:
+            x1, x2, y1, y2 = train_test_split(
+                    x1, y1, test_size=None)
 
         if build_fn is None:
             self.rprint("ERROR: build_fn is None!")
@@ -211,7 +239,8 @@ class HPCGridSearch:
                 allResults.append(self.train_model(d)) #, cv=KFolds)
                 with open('result-{:04d}.txt'.format(self.rank), 'a+') as outfile:
                     outfile.write("{}\n".format(allResults[-1]))
-            except Exception as e:
+            # except Exception as e:
+            except TypeError as e:
                 self.aprint("Error: Failed to train {}, {}".format(d,e))
                 d['acc'] = ''
                 d['time'] = ''
@@ -296,7 +325,11 @@ class HPCGridSearch:
             # Shut down!
 
     def train_model(self, params):
-        # loss_fn = "categorical_crossentropy"
+        # Compute dictionary hash
+        ident = dencode(params)
+        chk = sha256(ident.encode("utf-8")).hexdigest()
+        params['hash'] = chk
+        # Just start passing a dictionary to cm...
         # Check for some basic defaults
         if 'batch_size' in params.keys():
             batch_size = params['batch_size'][0]
@@ -306,52 +339,30 @@ class HPCGridSearch:
             epochs = params['epochs'][0]
         else:
             epochs = 1
-        # remove all things that can't be passed to the creator
-        # Any value that the creator would take but is not present in params,
-        # we assume that the creator has a default value set for that argument
-        noPass = [
-            "epochs",
-            "gpu",
-            "batch_size"
-        ]
-        usableParams = {}
-        for value in params.keys():
-            if value not in noPass:
-                k = params[value]
-                if isinstance(k, list):
-                    k = k[0]
-                # Determine if it is an int, float, or other
-                try:
-                    k = float(k)
-                    if k//1 == k:
-                        k = int(k)
-                except ValueError: # Here we assume it isnt a float or int
-                    pass
-                # We pass other things raw to the creator
-                usableParams[value] = k
-
+        # Just pass everything to create, the function may need it.
         model = self.cm(**usableParams)
         if "gpu" in params.keys():
             num_gpus = params['gpu'][0]
             if self.agpu:
-                loss_fn = model.loss
-                opt = model.optimizer
-                metrics = model.metrics_names
-                # Get the names of unique metrics
-                metrics = list(map(lambda x: x.split("_")[-1], metrics))
-                metrics = list(set(metrics))
+                # opt = Adam(lr=lr)
                 if num_gpus > 1 and tfversion < twoOh:
+                    opt = model.optimizer
                     model = multi_gpu_model(model,num_gpus)
-                    model.compile(opt, loss_fn, metrics=metrics)
+                    model.compile(opt, model.loss, metrics=['accuracy'])
                 elif num_gpus > 1 and tfversion >= twoOh:
                     # strat = D.MirroredStrategy(devices=self.phys)
                     vis = list(map(lambda x: "/gpu:{}".format(x), self.vis))
+                    # print("vis", vis)
+                    # Currently crashing due to NCCL error
+                    # strat = D.MirroredStrategy(devices=vis)
+                    # Possible fix is using separate merge technique
                     strat = D.MirroredStrategy(devices=vis,
                             cross_device_ops=tf.distribute.HierarchicalCopyAllReduce())
                     # strat = D.MirroredStrategy()
                     with strat.scope():
                         model = self.cm(**usableParams)
-                        model.compile(opt, loss_fn, metrics=metrics)
+                        opt = model.optimizer
+                        model.compile(opt, model.loss, metrics=['accuracy'])
         if self.augmentation:
             # Create a primitive augmentation object
             datagen = ImageDataGenerator(
@@ -376,25 +387,66 @@ class HPCGridSearch:
             # Test accuracy
             loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae, batch_size=batch_size, verbose=0) 
         else:
-            self.aprint("Training a network {}...".format(datetime.now()))
+            self.aprint("Training network {} :: {}...".format(chk, datetime.now()))
             # Fit the new model
+            # history = model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
+                    # [self.idata, self.idata, self.idata],
+            if not isdir("./training_logs/"):
+                try:
+                    mkdir("./training_logs/")
+                except:
+                    pass
+            csv = CSVLogger("./training_logs/{}.log".format(chk),
+                    append=False)
             start_time = datetime.now()
-            # Needs to be updated for multiple inputs and outputs
-            history = model.fit(x=self.idata, y=self.odata, batch_size=batch_size,
-                   epochs=epochs, verbose=0, shuffle=True)
+            history = model.fit(
+                    x=self.idata,
+                    y=self.odata,#, self.odata[:,1,:], self.odata[:,2,:]], 
+                    batch_size=batch_size,
+                    validation_split=0.2,
+                   epochs=epochs, verbose=0, shuffle=True,
+                   callbacks=[TimeHistory(),csv])
+                   # epochs=epochs, verbose=1, shuffle=True)
             end_time = datetime.now()
             # Test accuracy
-            # Captured output needs to be updated for multi-output
-            loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae,
-                   batch_size=batch_size, verbose=0) 
+            # loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae,
+                    # [self.idatae, self.idatae, self.idatae],
+            loss, layer1_acc  = model.evaluate( 
+                x=self.idatae,
+                y=self.odatae,# self.odatae[:,1,:], self.odatae[:,2,:]],
+               batch_size=batch_size, verbose=0) 
         # Compute timing metrics
         run_time = deltaToString(end_time - start_time)
-        params['acc']  = str(accuracy)
         params['time'] = str(run_time)
-        # needs to be update for multiple outputs
-        params['tacc'] = str(history.history['accuracy'])
+        # Consider accuracy to be the average of all three layer accuracies
+        # acc = list(map(lambda x: sum(x)/len(x), zip(layer1_acc, layer2_acc, layer3_acc)))
+        # accuracy = layer1_acc #+ layer2_acc + layer3_acc
+        # accuracy /= 3
+        params['acc']  = str(accuracy)
+        # Gather all output accuracies
+        keys = history.history.keys()
+        # taccs = [history.history[key] for key in keys if "accuracy" in key]
+        # loss = [history.history[key] for key in keys if "loss" in key]
+        # print(history.history.keys())
+        # params['tacc'] = list(
+                # map(lambda x: sum(x)/len(x), zip(*taccs)))
+        # params['tacc'] = history.history['accuracy']
+        # params['loss'] = history.history['loss']
+        # params['vloss'] = history.history['val_loss']
+        # params['vacc'] = history.history['val_accuracy'] 
+            # list( map(lambda x: sum(x)/len(x), zip(*loss)))
+        # params['acc1'] = taccs[0]
+        # params['acc2'] = taccs[1]
+        # params['acc3'] = taccs[2]
+        if not isdir("./weights/"):
+            try:
+                mkdir("./weights/")
+            except:
+                pass
         results = str(params)
+        model.save("./weights/{}".format(chk))
         self.aprint("Trained! {}".format(results))
+        # model.summary()
         return results
 
     def calc_verification_scores(self,test_labels,predictions):
@@ -450,7 +502,7 @@ def deltaToString(tme):
     hours = int(sec) // 60 // 60
     minutes = int(sec - hours* 60*60) // 60
     sec = sec - hours* 60*60 - minutes * 60
-    return "{:02d}:{:02d}:{:010.7f}".format(hours, minutes, sec)
+    return "{:02d}:{:02d}:{:05.2f}".format(hours, minutes, sec)
 
 # from tensorflow.python.client import device_lib
 def get_available_gpus():
