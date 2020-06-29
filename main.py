@@ -54,7 +54,7 @@ if __name__ == "__main__":
         yt = None
 
     if '-a' in argv:
-        val = argv[argv.index('-a') + 1 ]
+        val = argvi("-a")
         if val.lower() == "false" or val.lower() == 'f':
             augmentation = False
         elif val.lower() == "true" or val.lower() == 't':
@@ -70,6 +70,5 @@ if __name__ == "__main__":
     grid = HPCGridSearch(params, pschema="fs")
     # def search(self, x1=None, y1=None, x2=None, y2=None, augmentation=False, 
     # Load the data
-    x1, y1, x2, y2 = loadData(root=root)
     results = grid.search(x1=x, y1=y, x2=xt, y2=yt, 
             augmentation=augmentation, build_fn=create_model)
