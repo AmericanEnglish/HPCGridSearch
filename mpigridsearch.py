@@ -414,7 +414,7 @@ class HPCGridSearch:
             # Test accuracy
             # loss, accuracy = model.evaluate( x=self.idatae, y=self.odatae,
                     # [self.idatae, self.idatae, self.idatae],
-            loss, layer1_acc  = model.evaluate( 
+            loss, accuracy  = model.evaluate( 
                 x=self.idatae,
                 y=self.odatae,# self.odatae[:,1,:], self.odatae[:,2,:]],
                batch_size=batch_size, verbose=0) 
