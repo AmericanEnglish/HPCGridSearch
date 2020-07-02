@@ -26,6 +26,7 @@ if tfversion >= twoOh:
     import tensorflow as tf
     from   tensorflow.keras.callbacks import CSVLogger
     from tensorflow.keras.callbacks import Callback as KCallback  
+    from tensorflow.keras.callbacks import LearningRateScheduler
 else: # Assuming 1.XX
     import keras.backend as K
     from keras.utils.multi_gpu_utils import multi_gpu_model
@@ -342,6 +343,25 @@ class HPCGridSearch:
             epochs = params['epochs']
         else:
             epochs = 1
+        if "learning_schedule" in params.keys():
+            # Assume there exists some file
+            # myfile.py
+            # Which contains the learning schedule function
+            # def fun(epoch, lr)
+            # Then params.json would contain
+            # myfile.fun
+            all_things = params["learning_schedule"]
+            all_things = all_things.split(".")
+            baseImport, func = ".".join(all_things[:-1]), all_things[-1]
+            # Import function dynamically
+            baseImport = __import__(baseImport, globals(), locals(), [func], 0)
+            # Extract function from returned object
+            func = getattr(baseImport, func)
+            schedule = LearningRateScheduler(func)
+        else:   
+            # This is the standard keras learning rate schedule
+            def_schedule = lambda epoch, lr: lr
+            schedule = LearningRateScheduler(def_schedule)
         # Just pass everything to create, the function may need it.
         model = self.cm(**params)
         if "gpu" in params.keys():
@@ -408,7 +428,7 @@ class HPCGridSearch:
                     batch_size=batch_size,
                     validation_split=0.2,
                    epochs=epochs, verbose=0, shuffle=True,
-                   callbacks=[TimeHistory(),csv])
+                   callbacks=[TimeHistory(),schedule,csv])
                    # epochs=epochs, verbose=1, shuffle=True)
             end_time = datetime.now()
             # Test accuracy
